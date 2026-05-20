@@ -21,7 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   facade work only). Local CI (`test.yml`) and tests are already in
   place; the retrofit gains them rather than adds them.
 
-## [1.1.0] — 2026
+## [1.1.0] — 2026-05-10
 
 Major release: tool renamed from "ValveMasterTool" to "Phoenix Master
 Tool", expanded product line coverage, new Inventory tool.

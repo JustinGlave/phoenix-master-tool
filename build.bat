@@ -13,6 +13,25 @@ REM    - PyInstaller  (pip install pyinstaller)
 REM    - Inno Setup 6 (https://jrsoftware.org/isdl.php)
 REM ============================================================
 
+REM ── Python 3.12 soft-warn (FROZEN_BUILD_BASELINE / ADR-014) ──
+for /f "tokens=2" %%P in ('python --version 2^>^&1') do set PYTHON_VERSION=%%P
+echo Detected Python: %PYTHON_VERSION%
+echo %PYTHON_VERSION% | findstr /b "3.12." >nul
+if errorlevel 1 (
+    echo WARNING: Canonical frozen-build venv is Python 3.12 per ADR-014 / FROZEN_BUILD_BASELINE.
+    echo          Current interpreter is %PYTHON_VERSION%. Build will proceed but the
+    echo          S1-safe bootloader profile is only verified on 3.12.
+)
+
+REM ── Commons preflight ───────────────────────────────────────
+python -c "import phoenix_commons; print('phoenix_commons', phoenix_commons.__version__)" 2>nul
+if errorlevel 1 (
+    echo ERROR: phoenix_commons not importable in this venv.
+    echo        Run: git submodule update --init ^&^& pip install -e ./commons
+    pause
+    exit /b 1
+)
+
 REM ── Read version from version.py ────────────────────────────
 for /f "delims=" %%V in ('python -c "from version import __version__; print(__version__)"') do set APP_VERSION=%%V
 if "%APP_VERSION%"=="" (
@@ -22,31 +41,36 @@ if "%APP_VERSION%"=="" (
 )
 echo Building version %APP_VERSION%...
 
-REM ── Clean previous build ────────────────────────────────────
+REM ── Step 0: Full cleanup (FROZEN_BUILD_BASELINE) ────────────
 echo.
-echo Cleaning previous dist...
+echo [0/4] Cleaning previous build + dist (full cleanup per FROZEN_BUILD_BASELINE)...
 if exist dist  rmdir /s /q dist
-REM NOTE: build\ is kept for PyInstaller's incremental cache.
-REM       Run with "build.bat clean" to force a full rebuild.
-if /i "%1"=="clean" (
-    echo Forcing clean build - removing build cache...
-    if exist build rmdir /s /q build
-)
+if exist build rmdir /s /q build
 
-REM ── Step 1: PyInstaller ─────────────────────────────────────
+REM ── Step 1: PyInstaller (hardened per FROZEN_BUILD_BASELINE) ─
 echo.
 echo [1/4] Running PyInstaller...
 pyinstaller ^
     --onedir ^
     --windowed ^
+    --noupx ^
     --icon=Normal_red.ico ^
     --name=PhoenixMasterTool ^
     --add-data="version.py;." ^
     --add-data="phoenix_style.qss;." ^
     --add-data="inventory.py;." ^
+    --collect-all=phoenix_commons ^
     --collect-submodules=PySide6.QtCore ^
     --collect-submodules=PySide6.QtGui ^
     --collect-submodules=PySide6.QtWidgets ^
+    --exclude-module=tkinter ^
+    --exclude-module=_tkinter ^
+    --exclude-module=tcl ^
+    --exclude-module=tk ^
+    --exclude-module=lib2to3 ^
+    --exclude-module=idlelib ^
+    --exclude-module=turtle ^
+    --exclude-module=turtledemo ^
     phoenix_master_pyside6.py
 
 if errorlevel 1 (

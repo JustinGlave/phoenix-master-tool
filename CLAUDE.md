@@ -1,9 +1,9 @@
 # CLAUDE.md — Phoenix Master Tool
 
-> Operator orientation. Canonical Phoenix-platform doctrine (consumed
-> post-Phase-8a) lives in the sibling `phoenix-commons` repo's
-> `docs/ui-platform-baseline-v1/`. This repo does NOT carry a commons
-> submodule yet.
+> Operator orientation. Canonical Phoenix-platform doctrine lives in
+> the sibling `phoenix-commons` repo's `docs/ui-platform-baseline-v1/`.
+> Wave 8a B1 added the commons submodule at `commons/` (pinned to
+> `phoenix-commons` `main`; see `.gitmodules`).
 
 ## Purpose
 
@@ -31,31 +31,47 @@ catalog.
 ```powershell
 py -3.12 -m venv .venv                         # canonical per ADR-014; CI matrix also tests 3.10 + 3.11
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python.exe phoenix_master_pyside6.py
 ```
 
-`requirements.txt` was added during the Operational Hardening Sprint
-2026-05-19 for CI / fresh-clone convenience. `build.bat` does NOT
-consume it (assumes pre-prepared venv).
+`requirements.txt` and `requirements-dev.txt` were **added at Wave 8a
+B1 (2026-05-26)** per Decision #2 of `WAVE_8A_KICKOFF_DECISION_RECORD.md`.
+An earlier note that referenced the 2026-05-19 Operational Hardening
+Sprint was stale (the files were not actually present at repo root
+before B1). `build.bat` continues to assume a pre-prepared venv (does
+NOT install from requirements automatically — that's an operator step).
 
 ## Retrofit state
 
-**Not yet retrofitted to commons.** Phase 8a is the scheduled
-retrofit; gated by Phase 3C (PCC) completing first per
-`MIGRATION_RULES.md § Migration order` + § Frequency limits.
+**Wave 8a (commons retrofit) in progress.** B1 (commons submodule +
+requirements + family-standard ci.yml) landed 2026-05-26 by explicit
+operator-approved early-open override (the doctrinal cooldown floor
+was 2026-06-02; floor breached intentionally with no unresolved
+technical blockers). B2 through B9 sequence is in
+`phoenix-commons/docs/ui-platform-baseline-v1/WAVE_8A_IMPLEMENTATION_BRIEF.md`.
 
-v1.1.0 already shipped **`phoenix_style.qss`** at repo root — System A
-theme adoption is partially complete. Phase 8a retrofit scope is
-therefore reduced: widget facade + updater facade + paths facade
-only; theme work is largely done.
+v1.1.0 already shipped **`phoenix_style.qss`** at repo root with the
+canonical System A palette (byte-match verified per
+`WAVE_8A_VALVEMASTER_PREFLIGHT_AUDIT.md`). Wave 8a is therefore a
+**facade retrofit** — commons-backed architecture alignment + build
+hardening + updater/theme/widget facades. Expected visible change
+≈ 0% (Phoenix-CAD profile). NOT a theme swap.
 
 ## CI
 
-`.github/workflows/test.yml` — ubuntu-latest, Python matrix
-3.10/3.11/3.12, unittest discover + baseline self-test
-(`run_baseline_debug_benchmark`). Pre-rename CI preserved per user
-direction during the Operational Hardening Sprint — **intentional
-divergence** from the family's `ci.yml` + windows-latest convention.
+Two parallel workflows after Wave 8a B1:
+
+- `.github/workflows/test.yml` (pre-existing) — ubuntu-latest, Python
+  matrix 3.10/3.11/3.12, unittest discover + baseline self-test
+  (`run_baseline_debug_benchmark`). Preserved per Decision #3 of
+  `WAVE_8A_KICKOFF_DECISION_RECORD.md` — **intentional divergence**
+  preserved.
+- `.github/workflows/ci.yml` (added at Wave 8a B1) — windows-latest,
+  Python 3.12, `submodules: recursive` checkout + commons `import`
+  smoke + `compileall` + pytest. Family-standard signal.
+
+Both workflows must pass on the retrofit branch tip before merge.
 
 ## Do NOT change casually
 

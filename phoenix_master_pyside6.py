@@ -54,6 +54,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from phoenix_commons.theme import apply_dark_theme
+from phoenix_commons.widgets import (
+    PhoenixTable,
+    PrimaryButton,
+    SecondaryButton,
+    TertiaryButton,
+    UpdateBanner,
+)
+
+from paths import resource_path
+
 from phoenix_master_backend import (
     APP_NAME,
     PRODUCT_DISPLAY_NAMES,
@@ -93,119 +104,41 @@ except ImportError:
 # Widget code uses objectName + dynamic properties (never inline setStyleSheet)
 # so visual rules stay in one file.
 
-QSS_FILENAME = "phoenix_style.qss"
-
-# Minimal embedded fallback used when the .qss file isn't found at runtime
-# (e.g. an auto-update that ships only the new exe). Keep this in sync with
-# the most-load-bearing rules in phoenix_style.qss — the full file is the
-# source of truth.
-_EMBEDDED_QSS = """
-QMainWindow, QDialog { background-color: #0a0e27; color: #ffffff; }
-QWidget { color: #ffffff; font-family: "Segoe UI", sans-serif; font-size: 11pt; }
-QMenuBar { background-color: #0a0e27; color: #ffffff; border-bottom: 1px solid #2d3748; }
-QMenuBar::item:selected { background-color: #1f2937; color: #3b82f6; }
-QMenu { background-color: #141829; color: #ffffff; border: 1px solid #2d3748; }
-QMenu::item:selected { background-color: #1f2937; color: #3b82f6; }
-QPushButton { background-color: #dc2626; color: #ffffff; border: none; border-radius: 6px;
-              padding: 10px 16px; font-weight: 600; }
-QPushButton:hover { background-color: #b91c1c; }
-QPushButton#secondaryButton { background-color: #1e3a8a; }
-QPushButton#secondaryButton:hover { background-color: #1e40af; }
-QPushButton#tertiaryButton { background-color: transparent; border: 1px solid #4b5563; color: #3b82f6; }
-QPushButton#tertiaryButton:hover { background-color: #1f2937; border: 1px solid #3b82f6; }
-QLineEdit, QTextEdit, QPlainTextEdit { background-color: #141829; color: #ffffff;
-              border: 1px solid #2d3748; border-radius: 6px; padding: 10px 12px; }
-QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus { border: 2px solid #3b82f6; }
-QListWidget, QTableWidget { background-color: #141829; color: #ffffff;
-              border: 1px solid #2d3748; border-radius: 6px;
-              alternate-background-color: #0f1219; }
-QHeaderView::section { background-color: #050810; color: #e5e7eb; padding: 10px 12px;
-              border: none; border-right: 1px solid #2d3748; border-bottom: 1px solid #2d3748;
-              font-weight: 600; }
-QTabWidget::pane { background-color: #141829; border: 1px solid #2d3748; }
-QTabBar::tab { background-color: #050810; color: #9ca3af; padding: 10px 16px;
-              border: 1px solid #2d3748; border-bottom: none; }
-QTabBar::tab:selected { background-color: #141829; color: #ffffff; border-bottom: 3px solid #dc2626; }
-QStatusBar { background-color: #050810; color: #d1d5db; border-top: 1px solid #2d3748; }
-QFrame { border: 1px solid #2d3748; background-color: #141829; border-radius: 6px; }
-QFrame#SectionCard, QFrame#HeaderCard { background-color: #141829; border: 1px solid #2d3748;
-              border-radius: 8px; }
-QScrollBar:vertical { background-color: #0a0e27; width: 12px; border: none; }
-QScrollBar::handle:vertical { background-color: #4b5563; border-radius: 6px; min-height: 20px; }
-"""
-
-
-def _resource_path(filename: str) -> str:
-    """Resolve a bundled-asset path that works both in dev and in PyInstaller bundles."""
-    if getattr(sys, "frozen", False):
-        base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base, filename)
-
-
 def load_phoenix_stylesheet(app: QApplication) -> None:
-    """Load the Phoenix Controls QSS file, falling back to the embedded copy
-    if the file isn't bundled with the installation (e.g. a partial update)."""
-    app.setStyle("Fusion")
-    qss_path = _resource_path(QSS_FILENAME)
+    """Apply the Phoenix Controls dark-navy theme.
+
+    Two-layer composition:
+
+    1. ``phoenix_commons.theme.apply_dark_theme(app)`` provides the
+       System A baseline (Fusion style + canonical QPalette + generic
+       Phoenix widget QSS with DEFAULT_BRAND sentinel substitution).
+    2. The repo-root ``phoenix_style.qss`` is appended on top to add
+       app-specific object-name selectors that commons does not carry:
+       ``#FieldCardButton`` (with ``[invalid="true"]`` / ``[editable="true"]``
+       validity variants), ``#ModeBadge``, ``#ProductBadge``,
+       ``#ValidationBadge``, ``#ValidationIssueRow``, ``#SectionCard``,
+       ``#HeaderCard``, ``#CalcHeader``, etc. Without this layer,
+       Decoded-Fields cards fall back to the generic ``QPushButton``
+       red-primary rule and render every card red — losing the
+       per-segment validity signal. Restored at Wave 8a B8a (2026-05-26).
+
+    If the repo-root QSS is unreadable (partial-install / asset-only
+    update), commons' baseline still applies — the app remains usable,
+    only the app-specific validity / badge styling reverts to defaults.
+    """
+    apply_dark_theme(app)
     try:
-        with open(qss_path, "r", encoding="utf-8") as fh:
-            app.setStyleSheet(fh.read())
+        with open(resource_path("phoenix_style.qss"), "r", encoding="utf-8") as fh:
+            app.setStyleSheet(app.styleSheet() + "\n" + fh.read())
     except OSError:
-        app.setStyleSheet(_EMBEDDED_QSS)
+        pass
 
 
 # ── Phoenix component helper classes ──────────────────────────────────────────
-# Per the design system (CLAUDE_STARTER_PROMPT.txt section
-# "COMPONENT HELPER CLASSES"): use these instead of raw QPushButton /
-# QTableWidget so default min-height, cursor, and objectName are consistent.
-
-class PrimaryButton(QPushButton):
-    """Red primary-action button — the QSS default for QPushButton.
-
-    Uses setFixedHeight so the button doesn't get vertically stretched by
-    parent layouts that have extra space to distribute.
-    """
-
-    def __init__(self, text: str, parent: "QWidget | None" = None) -> None:
-        super().__init__(text, parent)
-        self.setFixedHeight(36)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-
-class SecondaryButton(QPushButton):
-    """Blue secondary-action button (objectName='secondaryButton')."""
-
-    def __init__(self, text: str, parent: "QWidget | None" = None) -> None:
-        super().__init__(text, parent)
-        self.setObjectName("secondaryButton")
-        self.setFixedHeight(36)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-
-class TertiaryButton(QPushButton):
-    """Outline low-emphasis button (objectName='tertiaryButton')."""
-
-    def __init__(self, text: str, parent: "QWidget | None" = None) -> None:
-        super().__init__(text, parent)
-        self.setObjectName("tertiaryButton")
-        self.setFixedHeight(36)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-
-
-class PhoenixTable(QTableWidget):
-    """Read-only data table with the Phoenix-styling defaults applied."""
-
-    def __init__(self, rows: int = 0, cols: int = 0, parent: "QWidget | None" = None) -> None:
-        super().__init__(rows, cols, parent)
-        self.verticalHeader().setVisible(False)
-        self.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.setSelectionMode(QTableWidget.SelectionMode.NoSelection)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.setAlternatingRowColors(True)
-
-
+# PrimaryButton / SecondaryButton / TertiaryButton / PhoenixTable / UpdateBanner
+# are imported from phoenix_commons.widgets at the top of this module (Wave 8a
+# B5 retrofit). App-specific widgets (BadgeLabel, SectionCard, ClickableFieldCard,
+# ValidationIssueRow, WatermarkWidget, dialogs) remain local further down.
 # ──────────────────────────────────────────────────────────────────────────────
 
 ICON_FILE = "Normal_red.ico"
@@ -719,56 +652,6 @@ class ValidationIssueRow(QFrame):
         msg_label.setObjectName("ValidationIssueMessage")
         msg_label.setWordWrap(True)
         layout.addWidget(msg_label)
-
-
-class UpdateBanner(QFrame):
-    """
-    Slim banner shown in the status bar when an update is available.
-    Matches the style of the Project Tracking Tool updater.
-    """
-
-    install_clicked = Signal()
-
-    def __init__(self, info: "UpdateInfo", parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setObjectName("UpdateBanner")
-        self.setFixedHeight(44)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 0, 16, 0)
-
-        msg = QLabel(
-            f"🆕  Update available — v{info.latest_version} is ready. "
-            f"You're on v{info.current_version}."
-        )
-        msg.setObjectName("UpdateMsg")
-        layout.addWidget(msg, 1)
-
-        if info.release_notes:
-            notes_btn = TertiaryButton("What's new?")
-            notes_btn.setFixedWidth(100)
-            notes_btn.clicked.connect(lambda: QMessageBox.information(
-                self,
-                f"What's new in v{info.latest_version}",
-                info.release_notes,
-            ))
-            layout.addWidget(notes_btn)
-
-        # InstallBtn is special — its objectName drives a custom QSS rule
-        # (green primary), per the design-system starter prompt.
-        install_btn = QPushButton("Install & Restart")
-        install_btn.setObjectName("InstallBtn")
-        install_btn.setFixedWidth(140)
-        install_btn.setMinimumHeight(36)
-        install_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        install_btn.clicked.connect(self.install_clicked)
-        layout.addWidget(install_btn)
-
-        dismiss_btn = TertiaryButton("✕")
-        dismiss_btn.setFixedWidth(32)
-        dismiss_btn.setToolTip("Dismiss")
-        dismiss_btn.clicked.connect(self.hide)
-        layout.addWidget(dismiss_btn)
 
 
 class CfmCalculatorDialog(QDialog):
@@ -2426,7 +2309,12 @@ class ValveMasterMainWindow(QMainWindow):
         info = self._pending_update_info
         if info is None:
             return
-        banner = UpdateBanner(info, self)
+        banner = UpdateBanner(
+            info.current_version,
+            info.latest_version,
+            info.release_notes,
+            self,
+        )
         banner.install_clicked.connect(lambda: self._do_install(info))
         self._update_banner = banner
         self.statusBar().addPermanentWidget(banner, 1)

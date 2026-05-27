@@ -1,39 +1,70 @@
 """
 updater.py — GitHub-based auto-updater for PhoenixMasterTool.
 
+Wave 8a B3 hybrid facade. As of 2026-05-26, this module delegates the
+generic update-check + download/apply path to ``phoenix_commons.updater``
+while preserving the ValveMaster-specific multi-fallback asset-name
+resolution (rename-tolerance from the v1.0 -> v1.1 renaming sprint).
+
+ADR-003 — Phoenix Master Tool ships an **exe-only** updater payload.
+``download_and_apply`` therefore calls commons with
+``expected_internal=False``; commons handles the zip validation
+(checking only that ``<EXE_NAME>`` exists at zip root) and uses its
+inline-PowerShell batch wrapper to extract the single exe over the
+running binary, then relaunch.
+
 How it works
 ------------
-1. On startup the GUI calls check_for_update() in a background thread.
-2. That function hits the GitHub Releases API and compares the latest tag
-   against the local __version__ string.
-3. If a newer version exists it returns an UpdateInfo object; the GUI shows
-   a banner in the status bar with an "Install & Restart" button.
-4. When the user clicks the button, download_and_apply() is called:
-      a. Downloads the new .zip to a temp file.
-      b. Writes a tiny .bat script that waits for this process to exit,
-         extracts just the exe from the zip, then relaunches it.
-      c. Launches the .bat and calls sys.exit() — Windows takes it from there.
+1. On startup the GUI calls ``check_for_update()`` in a background thread.
+2. That function hits the GitHub Releases API (via commons) and compares
+   the latest tag against the local ``__version__`` string.
+3. If a newer version exists it returns an ``UpdateInfo`` object; the
+   GUI shows a banner in the status bar with an "Install & Restart"
+   button.
+4. When the user clicks the button, ``download_and_apply()`` is called.
+   commons downloads, validates, and runs a PowerShell-driven exe-only
+   replacement before relaunching.
 
-Configuration
--------------
-Set GITHUB_OWNER and GITHUB_REPO to match your GitHub account and repository.
-The updater looks for a release asset whose name ends with .zip.
+Preserved-local logic (MIGRATION_RULES § 1 hybrid facade)
+---------------------------------------------------------
+- ``GITHUB_OWNER`` / ``GITHUB_REPO`` / ``EXE_NAME`` / ``LEGACY_EXE_NAMES``:
+  Naming constants. ``LEGACY_EXE_NAMES`` is the rename-tolerance list
+  for the v1.0 ``ValveMasterTool`` -> v1.1 ``PhoenixMasterTool``
+  transition; commons has no equivalent.
+
+- Multi-fallback asset-name lookup inside ``check_for_update()``:
+  commons takes a single ``zip_asset_name`` and exact-matches. The
+  ValveMaster facade wraps it in a loop over candidate zip names
+  derived from ``EXE_NAME`` and ``LEGACY_EXE_NAMES``, preserving the
+  forward-compat behavior the v1.0 updater originally had.
+
+- ``_parse_version`` / ``_ps_single_quote``: kept at module level for
+  the ``tests/test_updater.py`` regression baseline. commons has its
+  own internal copies; ours stay independently exercised by the unit
+  tests so the regression contract is preserved without needing to
+  reach into commons internals.
+
+UpdateInfo identity contract
+----------------------------
+``updater.UpdateInfo is phoenix_commons.updater.UpdateInfo`` — verified
+by the B3 commit's identity check. Callers that previously imported
+``UpdateInfo`` from this module continue to work unchanged.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 import re
-import subprocess
-import sys
-import tempfile
-import urllib.error
-import urllib.request
-import json
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+# Commons facade imports — these provide the generic update-check and
+# exe-only download/apply implementation. UpdateInfo is re-exported here
+# (identity preserved) so callers that do ``from updater import UpdateInfo``
+# don't change.
+from phoenix_commons.updater import UpdateInfo
+from phoenix_commons.updater import check_for_update as _commons_check_for_update
+from phoenix_commons.updater import download_and_apply as _commons_download_and_apply
 
 try:
     from version import __version__
@@ -42,46 +73,57 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# ── CHANGE THESE to match your GitHub account / repo name ─────────────────────
+# ── ValveMaster / Phoenix Master Tool release contract ──────────────────────
 GITHUB_OWNER = "JustinGlave"
-GITHUB_REPO  = "phoenix-master-tool"
-EXE_NAME     = "PhoenixMasterTool.exe"
+GITHUB_REPO = "phoenix-master-tool"
+EXE_NAME = "PhoenixMasterTool.exe"
 # Legacy exe names that older installs may have on disk. The auto-updater
-# looks for an exe entry inside the downloaded zip whose name matches the
-# running process first, then falls back to EXE_NAME, then to any of these
-# legacy names. Keep oldest first so a freshly-renamed install still works.
+# resolves asset names by trying the canonical zip first (derived from
+# EXE_NAME's stem), then each legacy candidate in order. Keep oldest first
+# so a freshly-renamed install still works.
 LEGACY_EXE_NAMES = ("ValveMasterTool.exe",)
-# ──────────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────────
 
-RELEASES_API    = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
-REQUEST_TIMEOUT = 8  # seconds
+__all__ = [
+    "UpdateInfo",
+    "check_for_update",
+    "download_and_apply",
+    "GITHUB_OWNER",
+    "GITHUB_REPO",
+    "EXE_NAME",
+    "LEGACY_EXE_NAMES",
+    # Helpers below are preserved for the tests/test_updater.py regression
+    # baseline. They are also independently useful for any future code that
+    # needs PowerShell string escaping or tag parsing.
+    "_parse_version",
+    "_ps_single_quote",
+]
 
-HEADERS = {
-    "Accept": "application/vnd.github+json",
-    "User-Agent": f"{GITHUB_REPO}-updater",
-}
 
-
-@dataclass
-class UpdateInfo:
-    current_version: str
-    latest_version:  str
-    download_url:    str
-    release_notes:   str
-
+# ─── Preserved-local helpers (test surface) ──────────────────────────────────
 
 def _ps_single_quote(value: str) -> str:
     """Escape a string for safe inclusion inside a PowerShell single-quoted literal.
 
-    PowerShell single-quoted strings escape "'" as "''". Without this, a path
-    such as "C:\\Users\\O'Brien\\..." would terminate the string mid-path and
-    break the extraction script.
+    PowerShell single-quoted strings escape ``'`` as ``''``. Without this, a
+    path such as ``"C:\\Users\\O'Brien\\..."`` would terminate the string
+    mid-path and break the extraction script.
+
+    Preserved-local for ``tests/test_updater.py``. commons has its own
+    equivalent (``phoenix_commons.updater.installer._ps_literal``) used
+    internally; keeping this here means the unit-test contract is
+    independent of commons internals.
     """
     return value.replace("'", "''")
 
 
 def _parse_version(tag: str) -> tuple[int, ...]:
-    """Convert 'v1.2.3', 'V1.2.3', or '1.2.3' to (1, 2, 3) for comparison."""
+    """Convert ``'v1.2.3'``, ``'V1.2.3'``, or ``'1.2.3'`` to ``(1, 2, 3)`` for comparison.
+
+    Preserved-local for ``tests/test_updater.py``. commons has its own
+    private ``_parse_version`` in ``phoenix_commons.updater.client``; the
+    behavior is equivalent but kept here as an independent test surface.
+    """
     cleaned = re.sub(r"[^\d.]", "", tag.lstrip("vV"))
     try:
         return tuple(int(part) for part in cleaned.split(".") if part)
@@ -89,182 +131,70 @@ def _parse_version(tag: str) -> tuple[int, ...]:
         return (0,)
 
 
+# ─── Public API — hybrid facade around phoenix_commons.updater ───────────────
+
 def check_for_update() -> Optional[UpdateInfo]:
+    """Query the GitHub Releases API and return an :class:`UpdateInfo` when newer.
+
+    Wave 8a B3 facade. Delegates per-asset lookup to
+    :func:`phoenix_commons.updater.check_for_update` and wraps it in a
+    multi-candidate fallback loop that preserves the ValveMaster
+    rename-tolerance contract:
+
+    1. Try the canonical zip first (``PhoenixMasterTool.zip``, derived
+       from ``EXE_NAME``'s stem).
+    2. Fall back to any zip derived from ``LEGACY_EXE_NAMES``.
+
+    Safe to call from a background thread — never raises. commons logs
+    network failures at DEBUG and payload-parse problems at WARNING.
     """
-    Query the GitHub Releases API.
-    Returns an UpdateInfo if a newer version is available, otherwise None.
-    Safe to call from a background thread — never raises, logs errors instead.
-    """
-    try:
-        req = urllib.request.Request(RELEASES_API, headers=HEADERS)
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-            data = json.loads(resp.read().decode())
+    candidate_zips: list[str] = [f"{Path(EXE_NAME).stem}.zip"]
+    candidate_zips += [f"{Path(name).stem}.zip" for name in LEGACY_EXE_NAMES]
 
-        latest_tag = data.get("tag_name", "")
-        if not latest_tag:
-            return None
-
-        if _parse_version(latest_tag) <= _parse_version(__version__):
-            return None  # already up to date
-
-        # Find the exe-only zip (not the full install zip).
-        # Preference: zip whose stem matches EXE_NAME's stem (so v1.1.0+
-        # picks PhoenixMasterTool.zip), then any zip matching a known
-        # legacy name (so a future asset rename doesn't break old installs),
-        # then any non-fullinstall zip.
-        assets = data.get("assets", [])
-        preferred_stems = [Path(EXE_NAME).stem.lower()]
-        preferred_stems += [Path(name).stem.lower() for name in LEGACY_EXE_NAMES]
-
-        zip_asset = None
-        for stem in preferred_stems:
-            target = f"{stem}.zip"
-            zip_asset = next(
-                (a for a in assets if a.get("name", "").lower() == target),
-                None,
-            )
-            if zip_asset is not None:
-                break
-
-        # Final fallback: any zip that isn't the full install.
-        if zip_asset is None:
-            zip_asset = next(
-                (a for a in assets
-                 if a.get("name", "").lower().endswith(".zip")
-                 and "fullinstall" not in a.get("name", "").lower()),
-                None,
-            )
-        if zip_asset is None:
-            logger.warning("New release %s found but no .zip asset attached.", latest_tag)
-            return None
-
-        return UpdateInfo(
+    for zip_asset_name in candidate_zips:
+        info = _commons_check_for_update(
+            owner=GITHUB_OWNER,
+            repo=GITHUB_REPO,
             current_version=__version__,
-            latest_version=latest_tag.lstrip("vV"),
-            download_url=zip_asset["browser_download_url"],
-            release_notes=data.get("body", "").strip(),
+            zip_asset_name=zip_asset_name,
         )
+        if info is not None:
+            return info
 
-    except urllib.error.URLError as exc:
-        logger.debug("Update check failed (network): %s", exc)
-        return None
-    except (OSError, ValueError, KeyError) as exc:
-        logger.warning("Update check failed: %s", exc)
-        return None
+    return None
 
 
 def download_and_apply(info: UpdateInfo, progress_callback=None) -> None:
+    """Download the update zip, validate the exe-only payload, apply, and relaunch.
+
+    Wave 8a B3 facade. Delegates to
+    :func:`phoenix_commons.updater.download_and_apply` with the
+    ValveMaster release contract baked in:
+
+    - ``exe_name=EXE_NAME`` (``PhoenixMasterTool.exe``) — the entry name
+      commons looks for in the zip and the basename used to construct
+      the PowerShell extraction script.
+    - ``expected_internal=False`` per **ADR-003** — Phoenix Master Tool
+      ships an exe-only updater zip (no ``_internal/`` folder). commons
+      validates only that ``<EXE_NAME>`` exists at the zip root.
+    - ``progress_callback(bytes_done, total_bytes)`` — forwarded
+      verbatim for GUI progress-bar driving.
+
+    The legacy-name tolerance from v1.0.x upgrades is preserved
+    naturally: commons extracts the ``EXE_NAME`` entry from the zip and
+    writes it to ``Path(sys.executable).resolve()`` — whatever the
+    running exe is actually called (``ValveMasterTool.exe`` for legacy
+    installs, ``PhoenixMasterTool.exe`` post-rename). The bytes are
+    swapped in place regardless of the on-disk filename.
+
+    Raises :class:`RuntimeError` (or
+    :class:`phoenix_commons.updater.installer.UpdatePackageError`,
+    a subclass) on any failure so the caller can show an error dialog
+    rather than silently fail.
     """
-    Download the new zip, extract just the exe over the current install,
-    and restart via a batch script.
-
-    progress_callback(bytes_done, total_bytes) is called during download
-    so the GUI can show a progress bar. Pass None to skip.
-
-    Raises RuntimeError if anything goes wrong so the caller can show
-    an error dialog rather than silently failing.
-    """
-    if not getattr(sys, "frozen", False):
-        raise RuntimeError(
-            "Update can only be applied to a compiled build.\n"
-            "You're running from source — pull the latest code from GitHub instead."
-        )
-
-    current_exe = Path(sys.executable).resolve()
-    # Overwrite the running exe in place. Using sys.executable's actual
-    # basename (rather than EXE_NAME) means a legacy install named
-    # ValveMasterTool.exe gets updated cleanly without leaving an orphan
-    # exe behind in the install directory.
-    new_exe = current_exe
-
-    # Download zip to system temp
-    tmp_fd, tmp_zip_str = tempfile.mkstemp(suffix=".zip")
-    tmp_zip = Path(tmp_zip_str)
-
-    try:
-        req = urllib.request.Request(info.download_url, headers=HEADERS)
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            total = int(resp.headers.get("Content-Length", 0))
-            done  = 0
-            chunk = 64 * 1024
-            with open(tmp_fd, "wb") as fh:
-                while True:
-                    block = resp.read(chunk)
-                    if not block:
-                        break
-                    fh.write(block)
-                    done += len(block)
-                    if progress_callback:
-                        progress_callback(done, total)
-
-        if total > 0 and tmp_zip.stat().st_size < total:
-            tmp_zip.unlink(missing_ok=True)
-            raise RuntimeError(
-                f"Download incomplete: got {tmp_zip.stat().st_size} of {total} bytes.\n"
-                "Please try again or download manually from GitHub."
-            )
-
-    except RuntimeError:
-        tmp_zip.unlink(missing_ok=True)
-        raise
-    except (urllib.error.URLError, OSError) as exc:
-        tmp_zip.unlink(missing_ok=True)
-        raise RuntimeError(f"Download failed: {exc}") from exc
-
-    # Write a batch script that:
-    #   1. Waits for this process to exit
-    #   2. Extracts ONLY the exe from the zip via PowerShell
-    #   3. Relaunches the app
-    #   4. Cleans up temp files and itself
-    pid = os.getpid()
-    bat_fd, bat_path_str = tempfile.mkstemp(suffix=".bat")
-    bat_path = Path(bat_path_str)
-
-    ps_zip = _ps_single_quote(str(tmp_zip))
-    ps_exe = _ps_single_quote(str(new_exe))
-
-    # Build a PowerShell-side preference list of candidate entry names so the
-    # script picks whichever exe name actually exists in the zip — running
-    # exe name first (overwrites in place), then EXE_NAME, then legacy names.
-    candidate_names: list[str] = []
-    running_basename = current_exe.name
-    for name in (running_basename, EXE_NAME, *LEGACY_EXE_NAMES):
-        if name and name not in candidate_names:
-            candidate_names.append(name)
-    ps_candidates = ", ".join(
-        f"'{_ps_single_quote(name)}'" for name in candidate_names
+    _commons_download_and_apply(
+        info,
+        exe_name=EXE_NAME,
+        expected_internal=False,
+        progress_callback=progress_callback,
     )
-
-    bat_content = f"""@echo off
-:wait
-tasklist /FI "PID eq {pid}" 2>nul | find "{pid}" >nul
-if not errorlevel 1 (
-    timeout /t 1 /nobreak >nul
-    goto wait
-)
-powershell -ExecutionPolicy Bypass -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; $zip = [System.IO.Compression.ZipFile]::OpenRead('{ps_zip}'); $candidates = @({ps_candidates}); $entry = $null; foreach ($name in $candidates) {{ $entry = $zip.Entries | Where-Object {{ $_.Name -eq $name }} | Select-Object -First 1; if ($entry) {{ break }} }}; if ($entry) {{ [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, '{ps_exe}', $true) }}; $zip.Dispose()"
-del "{tmp_zip}"
-start "" "{new_exe}"
-del "%~f0"
-"""
-
-    try:
-        with open(bat_fd, "w") as fh:
-            fh.write(bat_content)
-    except OSError as exc:
-        bat_path.unlink(missing_ok=True)
-        tmp_zip.unlink(missing_ok=True)
-        raise RuntimeError(f"Could not stage update script: {exc}") from exc
-
-    try:
-        subprocess.Popen(
-            ["cmd.exe", "/c", str(bat_path)],
-            creationflags=subprocess.CREATE_NO_WINDOW,
-            close_fds=True,
-        )
-    except OSError as exc:
-        bat_path.unlink(missing_ok=True)
-        tmp_zip.unlink(missing_ok=True)
-        raise RuntimeError(f"Could not launch updater script: {exc}") from exc
-
-    sys.exit(0)

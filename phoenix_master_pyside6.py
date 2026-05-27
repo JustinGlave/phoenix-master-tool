@@ -54,6 +54,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from paths import resource_path
+
 from phoenix_master_backend import (
     APP_NAME,
     PRODUCT_DISPLAY_NAMES,
@@ -135,20 +137,11 @@ QScrollBar::handle:vertical { background-color: #4b5563; border-radius: 6px; min
 """
 
 
-def _resource_path(filename: str) -> str:
-    """Resolve a bundled-asset path that works both in dev and in PyInstaller bundles."""
-    if getattr(sys, "frozen", False):
-        base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    else:
-        base = os.path.dirname(os.path.abspath(__file__))
-    return os.path.join(base, filename)
-
-
 def load_phoenix_stylesheet(app: QApplication) -> None:
     """Load the Phoenix Controls QSS file, falling back to the embedded copy
     if the file isn't bundled with the installation (e.g. a partial update)."""
     app.setStyle("Fusion")
-    qss_path = _resource_path(QSS_FILENAME)
+    qss_path = resource_path(QSS_FILENAME)
     try:
         with open(qss_path, "r", encoding="utf-8") as fh:
             app.setStyleSheet(fh.read())

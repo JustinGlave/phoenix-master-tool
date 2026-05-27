@@ -1,0 +1,15 @@
+# ValveMasterTool / Phoenix Master Tool — development dependencies
+#
+# Build + test toolchain pinned per FROZEN_BUILD_BASELINE.md and the
+# Phoenix Tools Unified Standard (phoenix-commons/docs/ui-platform-baseline-v1/
+# PHOENIX_APP_STANDARD_BASELINE_V1.md).
+#
+# PyInstaller 6.20.0 is the canonical S1-safe pin (per ADR-014 + the
+# Phase 6 build-hardening experiments).
+#
+# Generated at Wave 8a B1 (2026-05-26, operator-approved early-open).
+# Decision #2 (WAVE_8A_KICKOFF_DECISION_RECORD.md): add from scratch.
+
+pyinstaller==6.20.0
+pytest==8.3.4
+pytest-qt==4.4.0

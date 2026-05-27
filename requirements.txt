@@ -1,0 +1,17 @@
+# ValveMasterTool / Phoenix Master Tool — runtime dependencies
+#
+# Family-standard pinned set per the Phoenix Tools Unified Standard
+# (phoenix-commons/docs/ui-platform-baseline-v1/PHOENIX_APP_STANDARD_BASELINE_V1.md).
+# Pins are exact — a fresh checkout reproduces the exact build artifact
+# that shipped.
+#
+# Generated at Wave 8a B1 (2026-05-26, operator-approved early-open).
+# Decision #2 (WAVE_8A_KICKOFF_DECISION_RECORD.md): add from scratch.
+
+PySide6==6.10.2
+PySide6_Addons==6.10.2
+PySide6_Essentials==6.10.2
+shiboken6==6.10.2
+
+# Commons consumption (editable submodule install per ADR-015).
+-e ./commons

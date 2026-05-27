@@ -63,6 +63,8 @@ from phoenix_commons.widgets import (
     UpdateBanner,
 )
 
+from paths import resource_path
+
 from phoenix_master_backend import (
     APP_NAME,
     PRODUCT_DISPLAY_NAMES,
@@ -103,25 +105,33 @@ except ImportError:
 # so visual rules stay in one file.
 
 def load_phoenix_stylesheet(app: QApplication) -> None:
-    """Apply the Phoenix Controls dark-navy theme via the commons facade.
+    """Apply the Phoenix Controls dark-navy theme.
 
-    Wave 8a B4 — replaced the local disk-read + ``_EMBEDDED_QSS`` fallback
-    with :func:`phoenix_commons.theme.apply_dark_theme`, which handles
-    Fusion style + canonical QPalette + QSS resolution (with its own
-    package-data fallback) + brand-sentinel substitution internally.
+    Two-layer composition:
 
-    Uses commons :data:`DEFAULT_BRAND` (no ``brand=`` kwarg) — the
-    Phoenix Master Tool palette byte-matches commons canonical System A,
-    so no custom :class:`BrandProfile` is needed (per Wave 8a kickoff
-    Decision #5).
+    1. ``phoenix_commons.theme.apply_dark_theme(app)`` provides the
+       System A baseline (Fusion style + canonical QPalette + generic
+       Phoenix widget QSS with DEFAULT_BRAND sentinel substitution).
+    2. The repo-root ``phoenix_style.qss`` is appended on top to add
+       app-specific object-name selectors that commons does not carry:
+       ``#FieldCardButton`` (with ``[invalid="true"]`` / ``[editable="true"]``
+       validity variants), ``#ModeBadge``, ``#ProductBadge``,
+       ``#ValidationBadge``, ``#ValidationIssueRow``, ``#SectionCard``,
+       ``#HeaderCard``, ``#CalcHeader``, etc. Without this layer,
+       Decoded-Fields cards fall back to the generic ``QPushButton``
+       red-primary rule and render every card red — losing the
+       per-segment validity signal. Restored at Wave 8a B8a (2026-05-26).
 
-    Repo-root ``phoenix_style.qss`` is preserved as a local backup
-    artifact per MIGRATION_RULES § Local backup QSS strategy; commons
-    ships its own canonical copy via package data and consumes that
-    transparently. Caller surface is preserved: ``main`` still calls
-    ``load_phoenix_stylesheet(app)`` exactly as before.
+    If the repo-root QSS is unreadable (partial-install / asset-only
+    update), commons' baseline still applies — the app remains usable,
+    only the app-specific validity / badge styling reverts to defaults.
     """
     apply_dark_theme(app)
+    try:
+        with open(resource_path("phoenix_style.qss"), "r", encoding="utf-8") as fh:
+            app.setStyleSheet(app.styleSheet() + "\n" + fh.read())
+    except OSError:
+        pass
 
 
 # ── Phoenix component helper classes ──────────────────────────────────────────

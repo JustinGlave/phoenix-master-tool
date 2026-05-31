@@ -9,17 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-05-30
+
+Wave 8a commons retrofit + release hardening — no functional changes.
+
+### Changed
+- **Wave 8a commons retrofit complete** (merged 2026-05-26,
+  commit `631dbe8`). Migrated to commons-backed pattern per
+  ADR-015 (`phoenix-commons` git submodule + editable install).
+  Theme + widgets + paths + updater now facade through
+  `phoenix_commons` rather than local duplicates. Local QSS
+  overlay preserved per MIGRATION_RULES § Local backup QSS
+  strategy (System A palette was already shipped in v1.1.0;
+  this retrofit is widget/theme/updater facade work only).
+  AppId GUID `{A7F3C2D1-9B4E-4F6A-8C3D-1E5B7A9F2C4D}` preserved
+  byte-for-byte. Exe-only updater payload contract preserved
+  per ADR-003 (`expected_internal=False`). Detailed reports
+  under `phoenix-commons/docs/ui-platform-baseline-v1/WAVE_8A_*.md`
+  + `PHASE_8A_VALVEMASTER_REPORT.md`.
+- **Build pipeline hardened** per FROZEN_BUILD_BASELINE
+  (Wave 8a B6, merged 2026-05-26). `build.bat` now enforces
+  Python 3.12 soft-warn + Step 0 full cleanup +
+  `--noupx` + `--collect-all=phoenix_commons` + 8× stdlib
+  `--exclude-module` flags. S1-safe profile per ADR-014.
+- **Decoded Fields visual fix** (Wave 8a B8a, 2026-05-26):
+  valid decoded segments now correctly render with green
+  success treatment and invalid segments with red error
+  treatment, via two-layer QSS compose preserving the
+  app-specific `#FieldCardButton` selectors.
+
 ### Added
 - CHANGELOG.md (this file) — Operational Hardening Sprint
   2026-05-19.
-
-### Pending
-- Phase 8a retrofit to commons-backed pattern per
-  MIGRATION_RULES.md § Migration order (the System B grey →
-  System A navy palette swap is already complete — phoenix_style.qss
-  shipped in v1.1.0 — so Phase 8a is now widget/theme/updater
-  facade work only). Local CI (`test.yml`) and tests are already in
-  place; the retrofit gains them rather than adds them.
 
 ## [1.1.0] — 2026-05-10
 

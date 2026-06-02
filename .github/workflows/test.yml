@@ -18,14 +18,23 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
+      # phoenix_commons is consumed as the `commons/` git submodule (Wave 8a B1).
+      # The updater unit tests import `from updater import ...`, which now imports
+      # `phoenix_commons.updater` (pure-Python client + installer — no PySide6 at
+      # import time). Exposing the submodule's src/ on PYTHONPATH keeps this
+      # lightweight cross-version matrix fast (no heavy PySide6 install needed).
       - name: Run validation + updater unit tests
         run: python -m unittest discover -s tests -v
+        env:
+          PYTHONPATH: commons/src
 
       - name: Run baseline self-test
         run: |
